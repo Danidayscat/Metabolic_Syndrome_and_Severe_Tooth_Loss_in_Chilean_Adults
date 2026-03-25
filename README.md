@@ -64,7 +64,7 @@ National Health Survey (ENS) 2016–2017, held by the Ministry of Health
 of Chile (MINSAL). These data are not publicly redistributable due to 
 institutional restrictions. Access may be requested from MINSAL through 
 a formal public transparency petition under Ley de Transparencia 
-No. 20.285 (https://www.bcn.cl/leychile/navegar?idNorma=276363).
+No. 20.285.
 
 ## License
 
