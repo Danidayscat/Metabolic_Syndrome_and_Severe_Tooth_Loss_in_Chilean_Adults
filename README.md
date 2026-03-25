@@ -77,4 +77,4 @@ If you use this code, please cite the associated manuscript:
 > Williamson Dargham F, Cerda Lorca J, Agüero Jiménez A, 
 > Díaz-Catalán D, Vásquez-Muñoz M. Metabolic Syndrome and Severe 
 > Tooth Loss in Chilean Adults. *Journal of Dental Research*. 2026.
-> [DOI pending]
+> [Submitted]
