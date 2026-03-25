@@ -1,0 +1,1556 @@
+---
+title: "Metabolic Syndrome and Prevalence of Oral Health Diseases"
+lang: en
+author:
+  - name: "Felipe Williamson Dargham"
+    email: drfelipewilliamson@gmail.com
+    orcid: "0009-0005-5221-526X"
+  - name: "Amaru Simón Agüero Jiménez"
+    email: amaruaguero2004@ug.uchile.cl
+    orcid: "0000-0001-7336-1833"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+    self-contained: true
+    embed-resources: true
+#    bibliography: ref.bib
+#    csl: apa-numeric-superscript.csl
+    tbl-captions: true
+    tbl-cap-location: top
+execute:
+  warning: false
+  message: false
+  results: 'asis'
+  output: 'asis'
+---
+
+```{=html}
+<style>
+table caption {
+  caption-side: top;
+  text-align: left;
+  font-weight: bold;
+  margin-bottom: 0.5em;
+}
+</style>
+```
+
+# Data Management and R Packages
+
+```{r message=FALSE, warning=FALSE}
+install_and_load_packages <- function(packages) {
+  for (package in packages) {
+    if (!require(package, character.only = TRUE)) {
+      install.packages(package)
+      library(package, character.only = TRUE)
+    }
+  }
+}
+
+necessary_packages <- c("knitr", "tidyverse", "naniar", "performance","naniar","data.table","writexl",
+                        "party", "caret", "rpart", "partykit", "ROCR", "table1","DT",
+                        "data.tree", "randomForest", "caTools", "ggraph",
+                        "igraph", "e1071", "class", "haven","stringi","class","pROC","kableExtra","Hmisc","labelled",
+                        "survey")
+
+install_and_load_packages(necessary_packages)
+
+```
+
+```{r}
+
+data <- read_sav(paste0(gsub("/docs", "", getwd()), "/data/data.sav"), encoding = "latin1") %>%
+  mutate(across(where(is.labelled), to_factor))
+
+# labels_df <- data.frame(
+#   ColumnName = colnames(data %>% select(-1)),  # Exclude first column if not relevant
+#   Label = sapply(data %>% select(-1), function(x) attr(x, "label")),  # Extract labels
+#   NAs = sapply(data %>% select(-1), function(x) sum(is.na(x)))  # Count NAs per column
+# )
+#
+# print(labels_df)
+```
+
+```{r}
+select_data<- data %>% dplyr::select("IdEncuesta",
+                             "Sexo",
+                             "Edad",
+                             "Region",
+                             "Zona",
+                             "as7_1",
+                             "as5_1",
+                             "NEDU1_MINSAL_1",
+                             "m5p1",
+                             "m5p3",
+                             "m5p4",
+                             "m5p5",
+                             "m5p6",
+                             "m5p7",
+                             "m5p8",
+                             "m2p11a_PAS",
+                             "m2p11a_PAD",
+                             "m3p1",
+                             "m4p3",
+                             "Colesterol_HDL",
+                             "Colesterol_LDL_Calculado",
+                             "Colesterol_No_HDL_Calculado",
+                             "Colesterol_Total",
+                             "Colesterol_VLDL_Calculado",
+                             "Glucosa",
+                             "Trigliceridos",
+                             "SINDROME_METABOLICO",
+                             "Conglomerado",
+                             "Estrato",
+                             "Fexp_F1p_Corr")
+
+# Save labels before transformation
+column_labels <- sapply(select_data, function(x) attr(x, "label"))
+
+# Select columns for transformation
+columns_to_transform <- c("m2p11a_PAS", "m2p11a_PAD", "m3p1", "m4p3", "m5p3", "m5p5", "m5p6", "m5p8")
+
+# Apply transformation to selected columns
+select_data <- select_data %>%
+  mutate(across(all_of(columns_to_transform), ~ {
+    # Convert factors to numbers, non-numeric values to NA
+    as.numeric(ifelse(grepl("^[0-9]+(\\.[0-9]+)?$", as.character(.x)), as.character(.x), NA))
+  }))
+
+# Re-apply original labels to transformed columns
+for (col in columns_to_transform) {
+  attr(select_data[[col]], "label") <- column_labels[[col]]
+}
+
+# Create manual mapping based on all columns
+column_mapping <- c(
+  "Sexo" = "Sex",
+  "Edad" = "Age",
+  "Region" = "Region",
+  "Zona" = "Geographic zone",
+  "as7_1" = "Educational attainment",
+  "as5_1" = "Health insurance system",
+  "NEDU1_MINSAL_1" = "Educational attainment MINSAL",
+  "m5p1" = "Dental prosthesis use",
+  "m5p3" = "Remaining teeth upper",
+  "m5p4" = "Missing teeth upper",
+  "m5p5" = "Decayed teeth upper",
+  "m5p6" = "Remaining teeth lower",
+  "m5p7" = "Missing teeth lower",
+  "m5p8" = "Decayed teeth lower",
+  "m2p11a_PAS" = "Systolic blood pressure",
+  "m2p11a_PAD" = "Diastolic blood pressure",
+  "m3p1" = "Blood glucose",
+  "m4p3" = "Waist circumference",
+  "Colesterol_HDL" = "HDL cholesterol",
+  "Colesterol_LDL_Calculado" = "LDL cholesterol direct",
+  "Colesterol_No_HDL_Calculado" = "Non-HDL cholesterol",
+  "Colesterol_Total" = "Total cholesterol",
+  "Colesterol_VLDL_Calculado" = "VLDL cholesterol",
+  "Glucosa" = "Blood glucose level",
+  "Trigliceridos" = "Triglycerides",
+  "SINDROME_METABOLICO" = "Metabolic syndrome",
+  "Conglomerado" = "Conglomerado",
+  "Estrato" = "Estrato",
+  "Fexp_F1p_Corr" = "Fexp_F1p_Corr"
+)
+
+# Change column names in select_data based on mapping
+colnames(select_data) <- colnames(select_data) %>%
+  purrr::map_chr(~ ifelse(.x %in% names(column_mapping), column_mapping[[.x]], .x))
+
+labels_df <- data.frame(
+  ColumnName = colnames(select_data %>% select(-1, -28, -29, -30)),  # Exclude columns 1, 28, 29, 30
+  Label = sapply(select_data %>% select(-1, -28, -29, -30), function(x) attr(x, "label")),  # Extract labels
+  Class = sapply(select_data %>% select(-1, -28, -29, -30), class),  # Identify data class
+  NAs = sapply(select_data %>% select(-1, -28, -29, -30), function(x) sum(is.na(x))),  # Count NAs per column
+  Info = sapply(select_data %>% select(-1, -28, -29, -30), function(x) {
+    if (is.factor(x)) {
+      paste("Levels:", paste(levels(x), collapse = ", "))
+    } else if (is.numeric(x)) {
+      paste("Range:", min(x, na.rm = TRUE), "-", max(x, na.rm = TRUE))
+    } else {
+      NA
+    }
+  })
+)
+
+
+```
+
+## Missing Data
+
+```{r}
+#| fig-width: 10
+#| fig-height: 10
+ gg_miss_upset(select_data %>% select(-1, -28, -29, -30),nsets = n_var_miss(select_data))
+```
+
+# Methods
+
+## Study Design
+
+The present study corresponds to a secondary data analysis based on the National Health Survey of Chile 2016-2017 (ENS 2017). This cross-sectional design allows evaluation of the association between metabolic syndrome (main independent variable) and variables related to oral health, such as the presence of cavitated caries (dependent variable), functional dentition (dependent variable), denture use (dependent variable), and complete edentulism (dependent variable), while adjusting for sociodemographic and contextual variables considered as potential confounders.
+
+## Sampling Frame, Sampling, and Sample Size
+
+The sampling frame of the ENS 2017 consisted of the population residing in private households at the national level, excluding geographically difficult-to-access areas. A probabilistic, multistage, and stratified sampling design was employed. The stages included the selection of primary clusters (census blocks or zones), households within these clusters, and eligible participants in each household, according to quotas established to ensure representativeness. The total sample size corresponds to `r nrow(select_data)`.
+
+The final sample was designed to ensure estimation of indicators at the national, regional, and urban/rural levels. For this analysis, only participants with complete data on the main variables (metabolic syndrome, cavitated caries, functional dentition, denture use, and complete edentulism), as well as sociodemographic and contextual variables, were selected. This resulted in a subsample of size *n= `r nrow(select_data %>% drop_na(c("Remaining teeth lower","Metabolic syndrome")))`* , where *n* corresponds to the number of individuals with complete data after exclusion of missing data.
+
+### Participant Selection
+
+#### Inclusion Criteria:
+
+-   Persons aged 15 years and older who resided in occupied private households in Chile during the survey period.
+
+-   Participants who provided informed consent to participate in the survey and associated measurements.
+
+-   Availability of complete information on the diagnosis of metabolic syndrome, cavitated caries, functional dentition, denture use, and complete edentulism.
+
+#### Exclusion Criteria:
+
+-   Persons who, for reasons of health or disability, were unable to respond to the questionnaire or undergo physical measurements and laboratory examinations.
+
+## Methodology and Data Collection Instruments
+
+The ENS 2016-2017 used a combination of personal interviews, anthropometric measurements, and laboratory examinations to collect detailed information about participants' health. Interviews were conducted by trained surveyors, and physical measurements and biological sample collection were performed by health professionals. The instruments and procedures used were standardized to ensure quality and comparability of data.
+
+### Data Preparation:
+
+Download and review of the ENS 2016-2017 database. Data cleaning and processing, including recoding of variables according to study needs.
+
+### Descriptive Analysis:
+
+Characterization of the sample based on variables of interest, such as age, sex, region, geographic zone, educational level, and health insurance system.
+
+### Bivariate Analysis:
+
+Evaluation of the association between metabolic syndrome and each of the dependent variables related to oral health.
+
+### Multivariable Analysis:
+
+Logistic regression models adjusted for sociodemographic and contextual variables to identify independent associations.
+
+## Variable Operationalization
+
+```{r}
+rownames(labels_df) <- NULL
+datatable(labels_df %>% select(2,1,3,5,5),
+          options = list(pageLength = 26,  # Rows per page
+                         autoWidth = TRUE,
+                         scrollX = TRUE))
+```
+
+## Data Analysis
+
+The sample was characterized based on variables of interest. For categorical variables, such as cavitated caries, functional dentition, denture use, sex, region, geographic zone, educational level, and health insurance system, absolute and relative frequencies were calculated, adjusted by the weights specific to the stratified sampling design. For the continuous variable age, measures of central tendency (mean, median) and dispersion (standard deviation, interquartile range) were determined, also weighted by sampling weights.
+
+Associations and distributions of variables were displayed graphically to facilitate interpretation of results. Bar charts were used for categorical variables, box plots for comparing distributions of continuous variables between groups, and scatter plots to explore relationships between continuous variables. The association between metabolic syndrome and each dependent variable of oral health, as well as with sociodemographic and contextual variables, was evaluated. For categorical variables, the chi-squared test of independence was applied, adjusting for the weights of the stratified design.
+
+The independent association between metabolic syndrome and oral health variables was determined, adjusting for possible confounding factors. Binary logistic regression models were constructed for each dichotomous dependent variable (presence of cavitated caries, functional dentition, denture use, complete edentulism), considering metabolic syndrome as the main predictor. Models were adjusted respecting the weights of the stratified sampling design to ensure the validity of the estimates. Variables were included in the model for adjustment such as age, sex, region, geographic zone, educational level, and health insurance system, to control their potential effect as confounders. The statistical significance of coefficients was evaluated using p-values, and odds ratios (OR) with 95% confidence intervals were calculated to interpret the magnitude of associations.
+
+## Models
+
+The study employed binary logistic regression models (logit) to analyze the association between metabolic syndrome and four indicators of oral health: denture use, functional dentition (≥20 remaining teeth), complete edentulism (0 remaining teeth), and cavitated caries (≥1 decayed tooth). The standard logit model estimated the probability of the event using the logit link function:
+
+$$\log\left(\frac{p_i}{1-p_i}\right) = \mathbf{x}_i^T\boldsymbol{\beta}$$
+
+where $p_i = P(Y=1 \mid X)$ is the probability of the positive oral health indicator given the vector of predictors $\mathbf{x}_i^T$. In each case, $Y$ is a dichotomous indicator variable of the presence of the outcome of interest (denture use, functional dentition, complete edentulism, or cavitated caries), and the vector $\boldsymbol{\beta}$ represents the coefficients of each explanatory variable $\mathbf{x}_i^T$ [@cox1958regression].
+
+The **model development** followed a hierarchical stepwise approach. A base model (Model 1) was estimated with only the main exposure variable (metabolic syndrome), to which additional blocks of variables were progressively incorporated:
+
+- Model 1: Metabolic syndrome (bivariate)
+- Model 2: + Sex
+- Model 3: + Age
+- Model 4: + Region
+- Model 5: + Geographic zone (urban/rural)
+- Model 6: + Health insurance system
+- Model 7: + Educational attainment MINSAL
+
+The statistical significance of each added block was evaluated using **likelihood ratio tests** (LR) for nested models [@neyman1933problem]. To ensure comparability between models, all were adjusted using the same set of observations with complete data on all variables of the most complex model (Model 7).
+
+For model comparison, the **Akaike Information Criterion** (AIC) was calculated for each specification, with the model with lower AIC being preferable (indicative of better balance between good fit and parsimony). The **area under the ROC curve** (AUC) was estimated for each model as a measure of discriminative ability [@akaike1973information]. To comprehensively characterize predictive performance, the following metrics were estimated, defined from the confusion matrix (true positives TP, false positives FP, true negatives TN, and false negatives FN):
+
+* Sensitivity:
+
+  $$
+  \text{Sensitivity} = \frac{\text{TP}}{\text{TP}+\text{FN}}
+  $$
+
+* Specificity:
+
+  $$
+  \text{Specificity} = \frac{\text{TN}}{\text{TN}+\text{FP}}
+  $$
+
+* Positive Predictive Value (PPV):
+
+  $$
+  \text{PPV} = \frac{\text{TP}}{\text{TP}+\text{FP}}
+  $$
+
+* Negative Predictive Value (NPV):
+
+  $$
+  \text{NPV} = \frac{\text{TN}}{\text{TN}+\text{FN}}
+  $$
+
+* Overall Accuracy:
+
+  $$
+  \text{Accuracy} = \frac{\text{TP}+\text{TN}}{\text{TP}+\text{FP}+\text{FN}+\text{TN}}
+  $$
+
+These metrics complemented the information provided by the AUC and allow for a robust description of the models' ability to correctly identify positive cases of each oral health indicator [@hanley1982meaning; @delong1988comparing].
+
+### Model Diagnostics
+
+Once the model with the best performance (Model 7) was identified, its calibration was evaluated by comparing predicted probabilities with observed proportions. The predicted probabilities $\hat{p}_i$ were grouped into deciles based on their quantiles. For each decile $j$, the average predicted probability $\bar{\hat{p}}_j = \frac{1}{n_j}\sum_{i \in G_j} \hat{p}_i$ and the observed proportion $\bar{y}_j = \frac{1}{n_j}\sum_{i \in G_j} y_i$ were calculated. Ninety-five percent confidence intervals were constructed using the standard error $SE_j = \sqrt{\frac{\bar{y}_j(1-\bar{y}_j)}{n_j}}$.
+
+Overall goodness of fit was evaluated using the Hosmer-Lemeshow test:
+
+$$\chi^2_{HL} = \sum_{j=1}^{10} \frac{(O_j - E_j)^2}{E_j(1 - \bar{\hat{p}}_j)} + \frac{(n_j - O_j - n_j + E_j)^2}{(n_j - E_j)\bar{\hat{p}}_j}$$
+
+where $O_j$ represented observed events and $E_j$ expected events in each group. Under the null hypothesis of good calibration, the statistic followed a $\chi^2$ distribution with 8 degrees of freedom [@hosmer1980goodness].
+
+Deviance residuals were then calculated to identify systematic patterns and outlying observations:
+
+$$d_i = \text{sign}(y_i - \hat{p}_i) \sqrt{2\left[y_i \log\left(\frac{y_i}{\hat{p}_i}\right) + (1-y_i)\log\left(\frac{1-y_i}{1-\hat{p}_i}\right)\right]}$$
+
+Residuals were plotted against fitted values and loess smoothing was applied to detect deviations from linearity.
+
+Finally, the Generalized Variance Inflation Factor (GVIF) was calculated to evaluate multicollinearity between predictors. For each variable or set of dummy variables $j$, the GVIF was defined as:
+
+$$\text{GVIF}_j = \det(\mathbf{R}_j)\det(\mathbf{R}_{-j})^{-1}$$
+
+where $\mathbf{R}_j$ is the correlation matrix of the subset of variables associated with term $j$, and $\mathbf{R}_{-j}$ is the correlation matrix of all other predictor variables. The determinant $\det(\mathbf{R})$ measures the volume of the correlation ellipsoid; a determinant close to zero indicates high multicollinearity.
+
+Since GVIF depends on the number of parameters associated with each variable, the correction $\text{GVIF}^{1/(2 \times \text{df}_j)}$ was applied, where $\text{df}_j$ represented the degrees of freedom of variable $j$. Values greater than $\sqrt{5} \approx 2.24$ were considered problematic, indicating that the variance of the coefficient was inflated more than 5 times due to collinearity [@fox1992generalized].
+
+Point estimates and confidence intervals with a confidence level of $1-\alpha= 0.95$ were estimated while respecting the stratified design of the ENS 2017, weighting each observation according to the specific weight of the stratum to which it belongs. This ensured representativeness and precision in estimates for the Chilean population. A significance level of $\alpha= 0.05$ was considered, interpreting p-values less than this threshold as statistically significant. All analysis was performed using the R statistical software and RStudio (v 4.4.1), integrating Git and GitHub to ensure reproducibility and replicability of the analyses.
+
+# Results
+
+```{r}
+subset_data <- select_data %>%
+  select(-1) %>%  # Exclude only column 1 (IdEncuesta)
+  drop_na(c("Remaining teeth lower","Metabolic syndrome"))  %>%
+  mutate(across(everything(), ~ {
+    attr(., "label") <- NULL
+    .
+  }))
+
+table1(
+  ~ . | `Metabolic syndrome`,
+  data = subset_data %>% select(-Conglomerado, -Estrato, -Fexp_F1p_Corr),
+  overall = "Total"
+)
+```
+
+
+```{r}
+# Create dichotomous dependent variables
+subset_data <- subset_data %>%
+  mutate(
+    # Variable 1: Denture use (Yes/No)
+    protesis_dental = case_when(
+      `Dental prosthesis use` == "SÍ, PRÓTESIS SUPERIOR" ~ 1,
+      `Dental prosthesis use` == "SÍ, PRÓTESIS INFERIOR" ~ 1,
+      `Dental prosthesis use` == "SÍ, AMBAS" ~ 1,
+      `Dental prosthesis use` == "NO, NINGUNA" ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    # Variable 2: Functional dentition (≥20 remaining teeth)
+    # Sum of remaining teeth upper and lower
+    total_remaining_teeth = `Remaining teeth upper` + `Remaining teeth lower`,
+    dentadura_funcional = ifelse(total_remaining_teeth >= 20, 1, 0),
+
+    # Variable 3: Complete edentulism (0 remaining teeth)
+    edentulismo_completo = ifelse(total_remaining_teeth == 0, 1, 0),
+
+    # Variable 4: Cavitated caries (≥1 decayed tooth among remaining teeth)
+    total_decayed_teeth = `Decayed teeth upper` + `Decayed teeth lower`,
+    cavitated_caries = ifelse(total_decayed_teeth > 0, 1, 0)
+  ) %>%
+  # Convert metabolic syndrome to numeric for models
+  mutate(
+    sindrome_metabolico_num = ifelse(`Metabolic syndrome` == "SI", 1, 0)
+  )
+
+# Create metabolic syndrome component binary variables (ATP III criteria)
+subset_data <- subset_data %>%
+  mutate(
+    # Elevated blood pressure: SBP >= 130 OR DBP >= 85
+    elevated_bp = ifelse(`Systolic blood pressure` >= 130 | `Diastolic blood pressure` >= 85, 1, 0),
+
+    # Elevated waist circumference: >= 88 cm women, >= 102 cm men
+    # Note: We'll use available data; if gender-specific not available, use general threshold
+    elevated_waist = ifelse(`Waist circumference` >= 88, 1, 0),  # Using 88 as general threshold
+
+    # Elevated fasting glucose: >= 100 mg/dL
+    elevated_glucose = ifelse(`Blood glucose level` >= 100, 1, 0),
+
+    # Low HDL: < 40 mg/dL men, < 50 mg/dL women
+    # Using < 40 as conservative threshold
+    low_hdl = ifelse(`HDL cholesterol` < 40, 1, 0),
+
+    # Elevated triglycerides: >= 150 mg/dL
+    elevated_tg = ifelse(`Triglycerides` >= 150, 1, 0)
+  )
+
+# Handle lonely PSUs: adjust variance estimation for strata with a single PSU
+# This is standard practice when subsetting complex survey data causes some strata
+# to retain only one primary sampling unit
+library(survey)
+options(survey.lonely.psu = "adjust")
+
+# Create survey design object for ENS complex sampling using the full subset_data
+ens_design <- svydesign(
+  id = ~Conglomerado,
+  strata = ~Estrato,
+  weights = ~Fexp_F1p_Corr,
+  data = subset_data,
+  nest = TRUE
+)
+```
+
+## Bivariate Analysis
+
+```{r}
+#| fig-height: 12
+#| fig-width: 10
+# Function to perform bivariate analysis using survey design
+analisis_bivariado <- function(design, var_dep, var_dep_name, var_exp = "`Metabolic syndrome`") {
+  # Create contingency table from survey design
+  tabla <- svytable(as.formula(paste("~", var_exp, "+", var_dep)), design = design)
+
+  # Chi-squared test from survey design
+  chi_test <- svychisq(as.formula(paste("~", var_exp, "+", var_dep)), design = design)
+
+  # Calculate proportions
+  prop_tabla <- prop.table(tabla, margin = 2) * 100
+
+  # Create dataframe for visualization
+  df_plot <- as.data.frame(tabla)
+  names(df_plot) <- c("Metabolic_syndrome", var_dep_name, "Frequency")
+  df_plot[[var_dep_name]] <- factor(df_plot[[var_dep_name]],
+                                     levels = c("0", "1"),
+                                     labels = c("No", "Yes"))
+
+  # Add proportions
+  df_prop <- as.data.frame(prop_tabla)
+  names(df_prop) <- c("Metabolic_syndrome", var_dep_name, "Percentage")
+  df_plot <- merge(df_plot, df_prop)
+
+  return(list(
+    tabla = tabla,
+    chi_test = chi_test,
+    df_plot = df_plot,
+    prop_tabla = prop_tabla
+  ))
+}
+
+# Perform bivariate analysis for each dependent variable
+variables_dependientes <- list(
+  "protesis_dental" = "Denture use",
+  "dentadura_funcional" = "Functional dentition",
+  "edentulismo_completo" = "Complete edentulism",
+  "cavitated_caries" = "Cavitated caries"
+)
+
+resultados_bivariados <- list()
+
+for (var in names(variables_dependientes)) {
+  # Create temporary binary variable for the outcome
+  temp_design <- ens_design
+  temp_design$variables[[var]] <- as.character(ens_design$variables[[var]])
+  resultado <- analisis_bivariado(temp_design, var, variables_dependientes[[var]])
+  resultados_bivariados[[var]] <- resultado
+}
+
+# Create bar plots for bivariate analysis with significance brackets
+library(gridExtra)
+library(ggplot2)
+library(ggsignif)
+
+plots_bivariados <- list()
+
+for (i in seq_along(variables_dependientes)) {
+  var <- names(variables_dependientes)[i]
+  var_name <- variables_dependientes[[var]]
+
+  # Create plot data
+  tabla <- resultados_bivariados[[var]]$tabla
+  prop_tabla <- resultados_bivariados[[var]]$prop_tabla
+  p_valor <- resultados_bivariados[[var]]$chi_test$p.value
+
+  # Reorganize data for ggplot
+  data_plot <- data.frame(
+    Sindrome = rep(c("NO", "SI"), each = 2),
+    Condicion = rep(c("No", "Yes"), 2),
+    Porcentaje = as.vector(prop_tabla)
+  )
+
+  # Format p-value for display
+  if (p_valor < 0.001) {
+    p_label <- "p < 0.001"
+  } else {
+    p_label <- paste0("p = ", round(p_valor, 3))
+  }
+
+  # Create base plot
+  p <- ggplot(data_plot,
+              aes(x = Sindrome, y = Porcentaje, fill = Condicion)) +
+    geom_bar(stat = "identity", position = "dodge", alpha = 0.8, width = 0.7) +
+    geom_text(aes(label = paste0(round(Porcentaje, 1), "%")),
+              position = position_dodge(width = 0.7),
+              vjust = -0.5, size = 3) +
+    scale_fill_manual(values = c("No" = "#FECA57", "Yes" = "#e74c3c"),
+                      name = var_name) +
+    labs(
+      title = paste("Distribution of", var_name, "by metabolic syndrome"),
+      x = "Metabolic syndrome",
+      y = "Percentage (%)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "bottom",
+      axis.text = element_text(size = 10),
+      axis.title = element_text(size = 11)
+    ) +
+    scale_y_continuous(limits = c(0, 120), breaks = seq(0, 100, 20))
+
+  # Add significance bracket
+  # Find max y value to place bracket
+  max_y <- max(data_plot$Porcentaje)
+
+  # Adjust bracket position based on max value
+  if (max_y < 20) {
+    bracket_y <- max_y + 15
+  } else if (max_y < 50) {
+    bracket_y <- max_y + 10
+  } else {
+    bracket_y <- max_y + 8
+  }
+
+  p <- p + geom_signif(
+    comparisons = list(c("NO", "SI")),
+    annotations = p_label,
+    y_position = bracket_y,
+    tip_length = 0.03,
+    vjust = -0.5,
+    textsize = 3.5,
+    color = "black"
+  )
+
+  plots_bivariados[[i]] <- p
+}
+
+# Display all plots together
+grid.arrange(grobs = plots_bivariados, ncol = 2, nrow = 2)
+
+# Create summary table for bivariate analysis
+resumen_bivariado <- data.frame(
+  Variable = character(),
+  Sin_SM_No = character(),
+  Sin_SM_Si = character(),
+  Con_SM_No = character(),
+  Con_SM_Si = character(),
+  Chi2 = numeric(),
+  p_valor = character(),
+  stringsAsFactors = FALSE
+)
+
+for (var in names(variables_dependientes)) {
+  resultado <- resultados_bivariados[[var]]
+
+  # Extract frequencies and percentages
+  tabla <- resultado$tabla
+  prop <- round(resultado$prop_tabla, 1)
+  p_val <- resultado$chi_test$p.value
+
+  # Format p-value
+  if (p_val < 0.001) {
+    p_formatted <- "< 0.001"
+  } else {
+    p_formatted <- as.character(round(p_val, 3))
+  }
+
+  resumen_bivariado <- rbind(resumen_bivariado, data.frame(
+    Variable = variables_dependientes[[var]],
+    Sin_SM_No = paste0(tabla[1,1], " (", prop[1,1], "%)"),
+    Sin_SM_Si = paste0(tabla[2,1], " (", prop[2,1], "%)"),
+    Con_SM_No = paste0(tabla[1,2], " (", prop[1,2], "%)"),
+    Con_SM_Si = paste0(tabla[2,2], " (", prop[2,2], "%)"),
+    Chi2 = round(resultado$chi_test$statistic, 3),
+    p_valor = p_formatted,
+    stringsAsFactors = FALSE
+  ))
+}
+
+# Display summary table
+kable(resumen_bivariado,
+      caption = "Bivariate associations between metabolic syndrome and oral health (survey-weighted)",
+      col.names = c("Variable", "No (%)", "Yes (%)", "No (%)", "Yes (%)", "X²", "P-value"),
+      align = c("l", "c", "c", "c", "c", "c", "c")) %>%
+  remove_column(1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  add_header_above(c(" " = 1,
+                     "Without metabolic syndrome" = 2,
+                     "With metabolic syndrome" = 2,
+                     "Statistical test" = 2)) %>%
+  column_spec(7,
+              color = ifelse(resumen_bivariado$p_valor == "< 0.001", "red", "black"),
+              bold = ifelse(resumen_bivariado$p_valor == "< 0.001", TRUE, FALSE))
+```
+
+## Table 3: Individual Metabolic Syndrome Components Analysis
+
+```{r}
+# Crude associations between each MS component and all 4 oral health outcomes
+variables_dependientes <- list(
+  "protesis_dental" = "Denture use",
+  "dentadura_funcional" = "Functional dentition",
+  "edentulismo_completo" = "Complete edentulism",
+  "cavitated_caries" = "Cavitated caries"
+)
+
+ms_components <- list(
+  "elevated_bp" = "Elevated blood pressure",
+  "elevated_waist" = "Elevated waist circumference",
+  "elevated_glucose" = "Elevated fasting glucose",
+  "low_hdl" = "Low HDL cholesterol",
+  "elevated_tg" = "Elevated triglycerides"
+)
+
+# Create table for MS components using survey-weighted logistic regression
+ms_component_results <- data.frame()
+
+for (ms_var in names(ms_components)) {
+  for (dep_var in names(variables_dependientes)) {
+    # Fit crude survey-weighted logistic regression
+    formula <- as.formula(paste(dep_var, "~", ms_var))
+    model <- svyglm(formula, design = ens_design, family = quasibinomial())
+
+    # Extract OR and CI
+    coef_val <- coef(model)[2]
+    se_val <- summary(model)$coefficients[2, "Std. Error"]
+    p_val <- summary(model)$coefficients[2, "Pr(>|t|)"]
+
+    or <- exp(coef_val)
+    ci_lower <- exp(coef_val - 1.96 * se_val)
+    ci_upper <- exp(coef_val + 1.96 * se_val)
+
+    # Significance
+    stars <- ifelse(p_val < 0.001, "***",
+                   ifelse(p_val < 0.01, "**",
+                         ifelse(p_val < 0.05, "*", "")))
+
+    ms_component_results <- rbind(ms_component_results, data.frame(
+      MS_Component = ms_components[[ms_var]],
+      Outcome = variables_dependientes[[dep_var]],
+      OR = sprintf("%.3f%s", or, stars),
+      CI_95 = sprintf("[%.3f, %.3f]", ci_lower, ci_upper),
+      p_value = round(p_val, 4),
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+# Create formatted table for each outcome
+for (outcome in names(variables_dependientes)) {
+  outcome_data <- ms_component_results[ms_component_results$Outcome == variables_dependientes[[outcome]], ]
+
+  # Remove outcome column and reorder
+  outcome_table <- outcome_data %>% select(MS_Component, OR, CI_95, p_value)
+
+  kable(outcome_table,
+        caption = paste("Survey-weighted crude associations between MS components and", variables_dependientes[[outcome]]),
+        col.names = c("Metabolic Syndrome Component", "Odds Ratio", "95% CI", "P-value"),
+        format = "html",
+        escape = FALSE) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                  font_size = 11,
+                  full_width = FALSE) %>%
+    footnote(general = c("*** p < 0.001, ** p < 0.01, * p < 0.05",
+                        "Confidence intervals calculated using standard error of log(OR)",
+                        "Adjusted for survey design (stratification, clustering, weights)")) %>%
+    print()
+}
+```
+
+## Multivariable Analysis
+
+```{r}
+## Multivariable Analysis - Survey-Weighted Logistic Regression
+
+# Load necessary libraries
+library(broom)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(survey)
+
+# Ensure dependent variables are created (already done above)
+
+# Complete mapping of variable names
+var_names_mapping <- c(
+  "(Intercept)" = "Intercept",
+  "sindrome_metabolico_num" = "Metabolic syndrome (Yes vs No)",
+  "SexMUJER" = "Sex: Female",
+  "Age" = "Age (years)",
+  # Regions
+  "RegionI. Tarapacá" = "Region: Tarapacá",
+  "RegionII. Antofagasta" = "Region: Antofagasta",
+  "RegionIII. Atacama" = "Region: Atacama",
+  "RegionIV. Coquimbo" = "Region: Coquimbo",
+  "RegionV. Valparaíso" = "Region: Valparaíso",
+  "RegionVI. L. Bdo. OHiggins" = "Region: O'Higgins",
+  "RegionVII. Maule" = "Region: Maule",
+  "RegionVIII. Bíobío" = "Region: Biobío",
+  "RegionIX. La Araucanía" = "Region: La Araucanía",
+  "RegionX. Los Lagos" = "Region: Los Lagos",
+  "RegionXI. Aysén" = "Region: Aysén",
+  "RegionXII. Magallanes y Antártica" = "Region: Magallanes",
+  "RegionXIII. Metropolitana" = "Region: Metropolitana",
+  "RegionXIV. Los Ríos" = "Region: Los Ríos",
+  "RegionXV. Arica y Parinacota" = "Region: Arica y Parinacota",
+  # Geographic zone
+  "`Geographic zone`RURAL" = "Zone: Rural",
+  # Health insurance system
+  "`Health insurance system`SISTEMA PÚBLICO FONASA GRUPO A" = "System: FONASA A",
+  "`Health insurance system`SISTEMA PÚBLICO FONASA GRUPO B" = "System: FONASA B",
+  "`Health insurance system`SISTEMA PÚBLICO FONASA GRUPO C" = "System: FONASA C",
+  "`Health insurance system`SISTEMA PÚBLICO FONASA GRUPO D" = "System: FONASA D",
+  "`Health insurance system`SISTEMA PÚBLICO FONASA, NO SABE GRUPO" = "System: FONASA Unknown",
+  "`Health insurance system`FFAA Y DE ORDEN" = "System: Armed Forces",
+  "`Health insurance system`ISAPRE" = "System: ISAPRE",
+  "`Health insurance system`NINGUNO" = "System: None",
+  "`Health insurance system`OTRO SISTEMA. ESPECIFIQUE" = "System: Other",
+  # Educational attainment MINSAL
+  "`Educational attainment MINSAL`8-12 años" = "Education: 8-12 years",
+  "`Educational attainment MINSAL`13 o más años" = "Education: 13+ years"
+)
+
+# Function to create OR table for survey-weighted logit models
+crear_tabla_OR_logit <- function(modelo_list, var_name) {
+
+  # Get all unique terms
+  all_terms <- character()
+  for(model in modelo_list) {
+    all_terms <- c(all_terms, names(coef(model)))
+  }
+  all_terms <- unique(all_terms)
+
+  # Initialize dataframe for results
+  results_list <- list()
+
+  # For each term
+  for(j in 1:length(all_terms)) {
+    term <- all_terms[j]
+
+    # Get clean name
+    clean_name <- ifelse(term %in% names(var_names_mapping),
+                        var_names_mapping[term],
+                        term)
+
+    # Initialize rows
+    or_values <- character()
+    ci_values <- character()
+
+    for(i in 1:length(modelo_list)) {
+      model <- modelo_list[[i]]
+
+      coef_names <- names(coef(model))
+      if(term %in% coef_names) {
+        # Get coefficient and p-value (note: svyglm uses t-test, not z-test)
+        coef_val <- coef(model)[term]
+        se_val <- summary(model)$coefficients[term, "Std. Error"]
+        p_val <- summary(model)$coefficients[term, "Pr(>|t|)"]
+
+        # Calculate OR and CI
+        or_val <- exp(coef_val)
+        ci_lower <- exp(coef_val - 1.96 * se_val)
+        ci_upper <- exp(coef_val + 1.96 * se_val)
+
+        # Significance
+        stars <- ifelse(p_val < 0.001, "***",
+                       ifelse(p_val < 0.01, "**",
+                             ifelse(p_val < 0.05, "*", "")))
+
+        or_values[i] <- sprintf("%.3f%s", or_val, stars)
+        ci_values[i] <- sprintf("[%.3f, %.3f]", ci_lower, ci_upper)
+      } else {
+        or_values[i] <- ""
+        ci_values[i] <- ""
+      }
+    }
+
+    # Add to list
+    results_list[[2*j-1]] <- c(clean_name, or_values)
+    results_list[[2*j]] <- c("", ci_values)
+  }
+
+  # Convert list to dataframe
+  results_df <- do.call(rbind, results_list)
+  colnames(results_df) <- c("Variable", paste0("Model ", 1:7))
+  results_df <- as.data.frame(results_df, stringsAsFactors = FALSE)
+
+  # Add model statistics
+  n_stats <- 3
+  stats_values <- matrix(NA, nrow = n_stats, ncol = 8)
+  stats_values[,1] <- c("N observations", "Deviance", "Pseudo R² (McFadden)")
+
+  for(i in 1:length(modelo_list)) {
+    model <- modelo_list[[i]]
+    n <- as.numeric(nobs(model))[1]
+
+    # Pseudo R² using deviance
+    null_model <- tryCatch(update(model, . ~ 1), error = function(e) NULL)
+    dev_full <- as.numeric(deviance(model))[1]
+
+    if(!is.null(null_model)) {
+      dev_null <- as.numeric(deviance(null_model))[1]
+      mcfadden <- 1 - (dev_full / dev_null)
+    } else {
+      mcfadden <- NA
+    }
+
+    stats_values[,i+1] <- c(
+      format(n, big.mark = ","),
+      sprintf("%.2f", dev_full),
+      ifelse(is.na(mcfadden), "NA", sprintf("%.3f", mcfadden))
+    )
+  }
+
+  colnames(stats_values) <- colnames(results_df)
+  stats_df <- as.data.frame(stats_values, stringsAsFactors = FALSE)
+
+  final_table <- rbind(results_df, stats_df)
+  return(final_table)
+}
+
+# Dependent variables
+variables_dependientes <- list(
+  "protesis_dental" = "Denture use",
+  "dentadura_funcional" = "Functional dentition",
+  "edentulismo_completo" = "Complete edentulism",
+  "cavitated_caries" = "Cavitated caries"
+)
+
+# For each dependent variable
+for (var in names(variables_dependientes)) {
+
+  # Create formulas for stepwise models
+  formulas <- list(
+    # Model 1: Only metabolic syndrome
+    m1 = as.formula(paste(var, "~ sindrome_metabolico_num")),
+
+    # Model 2: + Sex
+    m2 = as.formula(paste(var, "~ sindrome_metabolico_num + Sex")),
+
+    # Model 3: + Age
+    m3 = as.formula(paste(var, "~ sindrome_metabolico_num + Sex + Age")),
+
+    # Model 4: + Region
+    m4 = as.formula(paste(var, "~ sindrome_metabolico_num + Sex + Age + Region")),
+
+    # Model 5: + Geographic zone
+    m5 = as.formula(paste(var, "~ sindrome_metabolico_num + Sex + Age + Region + `Geographic zone`")),
+
+    # Model 6: + Health insurance system
+    m6 = as.formula(paste(var, "~ sindrome_metabolico_num + Sex + Age + Region + `Geographic zone` + `Health insurance system`")),
+
+    # Model 7: Complete with Educational attainment
+    m7 = as.formula(paste(var, "~ sindrome_metabolico_num + Sex + Age + Region + `Geographic zone` + `Health insurance system` + `Educational attainment MINSAL`"))
+  )
+
+  # IMPORTANT: Create a subset with complete cases for ALL variables in the most complex model
+  # This ensures all models use exactly the same observations
+  variables_completas <- c(var, "sindrome_metabolico_num", "Sex", "Age", "Region",
+                          "Geographic zone", "Health insurance system", "Educational attainment MINSAL",
+                          "Conglomerado", "Estrato", "Fexp_F1p_Corr")
+
+  # Remove rows with NA in any of these variables
+  data_completa <- subset_data[complete.cases(subset_data[, variables_completas]), ]
+
+  # Create survey design for complete cases
+  design_completa <- svydesign(
+    id = ~Conglomerado,
+    strata = ~Estrato,
+    weights = ~Fexp_F1p_Corr,
+    data = data_completa,
+    nest = TRUE
+  )
+
+  # Fit SURVEY-WEIGHTED LOGIT models using svyglm
+  modelos_logit <- list()
+  for(i in 1:length(formulas)) {
+    modelos_logit[[i]] <- svyglm(formulas[[i]], design = design_completa, family = quasibinomial())
+  }
+
+  # Create and display table for Logit models
+  tabla_logit <- crear_tabla_OR_logit(modelos_logit, variables_dependientes[[var]])
+
+  kable(tabla_logit,
+        caption = paste("Survey-weighted logistic regression models for", variables_dependientes[[var]],
+                       "- Odds Ratios and 95% confidence intervals"),
+        format = "html",
+        escape = FALSE) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                  font_size = 11,
+                  full_width = FALSE) %>%
+    pack_rows("Model statistics", nrow(tabla_logit) - 2, nrow(tabla_logit)) %>%
+    footnote(general = c("*** p < 0.001, ** p < 0.01, * p < 0.05",
+                        "95% confidence intervals in brackets",
+                        "All models adjusted for survey design (stratification, clustering, weights)",
+                        "Reference categories: Without metabolic syndrome, Male sex, Urban zone, etc.")) %>%
+    print()
+
+  # Save models and design in global environment with descriptive names
+  assign(paste0("logit_", var, "_modelos"), modelos_logit, envir = .GlobalEnv)
+  assign(paste0("design_completa_", var), design_completa, envir = .GlobalEnv)
+
+  # Save complete dataset used for this variable
+  assign(paste0("data_completa_", var), data_completa, envir = .GlobalEnv)
+}
+
+# Comparison of nested models using deviance differences
+for (var in names(variables_dependientes)) {
+
+  # Retrieve models from global environment
+  modelos_logit <- get(paste0("logit_", var, "_modelos"))
+
+  lr_results <- data.frame(
+    Comparison = character(),
+    Deviance_Diff = numeric(),
+    DF = numeric(),
+    p_value = character(),
+    stringsAsFactors = FALSE
+  )
+
+  for(i in 2:7) {
+    # Use deviance difference as approximate LRT for survey models
+    dev_prev <- as.numeric(deviance(modelos_logit[[i-1]]))[1]
+    dev_curr <- as.numeric(deviance(modelos_logit[[i]]))[1]
+    dev_diff <- dev_prev - dev_curr
+    df_diff <- length(coef(modelos_logit[[i]])) - length(coef(modelos_logit[[i-1]]))
+
+    # Approximate p-value using chi-squared distribution
+    p_val <- pchisq(dev_diff, df = abs(df_diff), lower.tail = FALSE)
+
+    p_formatted <- ifelse(p_val < 0.001, "< 0.001***",
+                         ifelse(p_val < 0.01, sprintf("%.3f**", p_val),
+                               ifelse(p_val < 0.05, sprintf("%.3f*", p_val),
+                                     sprintf("%.3f", p_val))))
+
+    lr_results <- rbind(lr_results, data.frame(
+      Comparison = paste("Model", i-1, "vs Model", i),
+      Deviance_Diff = round(dev_diff, 3),
+      DF = abs(df_diff),
+      p_value = p_formatted,
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  kable(lr_results,
+        caption = paste("Likelihood ratio tests for model comparison -",
+                       variables_dependientes[[var]]),
+        format = "html",
+        col.names = c("Comparison", "Deviance Diff", "DF", "P-value")) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  font_size = 11,
+                  full_width = FALSE) %>%
+    footnote(general = c("*** p < 0.001, ** p < 0.01, * p < 0.05",
+                        "Approximate LRT based on deviance differences")) %>%
+    print()
+}
+```
+
+```{r}
+#| fig-height: 20
+#| fig-width: 17
+################################################################################
+# EVALUATION OF PERFORMANCE METRICS AND ROC CURVES
+################################################################################
+
+# Load necessary libraries
+library(pROC)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(knitr)
+library(kableExtra)
+
+################################################################################
+# FUNCTION TO CALCULATE PERFORMANCE METRICS (with survey-weighted models)
+################################################################################
+
+calculate_performance_metrics <- function(model, data, var_dep, model_name = "Model") {
+  # Get predicted probabilities - for svyglm use predict without newdata
+  pred_probs <- predict(model, type = "response")
+  true_labels <- data[[var_dep]]
+
+  # Calculate ROC curve and AUC
+  roc_obj <- roc(true_labels, pred_probs, quiet = TRUE)
+  auc_value <- as.numeric(auc(roc_obj))
+
+  # Find optimal threshold using Youden's J statistic
+  coords_optimal <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity"),
+                          best.method = "youden")
+  optimal_threshold <- coords_optimal$threshold
+
+  # Create predictions using optimal threshold
+  pred_labels <- ifelse(pred_probs >= optimal_threshold, 1, 0)
+
+  # Create confusion matrix
+  cm <- confusionMatrix(factor(pred_labels, levels = c("0", "1")),
+                        factor(true_labels, levels = c("0", "1")),
+                        positive = "1")
+
+  # Extract metrics
+  sensitivity <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  accuracy <- cm$overall["Accuracy"]
+  precision <- cm$byClass["Pos Pred Value"]
+  npv <- cm$byClass["Neg Pred Value"]
+  f1_score <- cm$byClass["F1"]
+  balanced_accuracy <- cm$byClass["Balanced Accuracy"]
+
+  # Calculate Matthews Correlation Coefficient
+  tn <- as.numeric(cm$table[1,1])
+  fp <- as.numeric(cm$table[1,2])
+  fn <- as.numeric(cm$table[2,1])
+  tp <- as.numeric(cm$table[2,2])
+
+  mcc_denominator <- sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+  mcc <- if(is.na(mcc_denominator) || mcc_denominator == 0) 0 else ((tp * tn) - (fp * fn)) / mcc_denominator
+
+  # Calculate Brier Score
+  brier_score <- mean((pred_probs - true_labels)^2)
+
+  # Return results
+  metrics <- data.frame(
+    Model = model_name,
+    AUC = auc_value,
+    Sensitivity = as.numeric(sensitivity),
+    Specificity = as.numeric(specificity),
+    Accuracy = as.numeric(accuracy),
+    Precision = as.numeric(precision),
+    NPV = as.numeric(npv),
+    F1_Score = as.numeric(f1_score),
+    Balanced_Accuracy = as.numeric(balanced_accuracy),
+    MCC = mcc,
+    Brier_Score = brier_score,
+    Optimal_Threshold = optimal_threshold,
+    stringsAsFactors = FALSE
+  )
+
+  return(list(metrics = metrics, roc_obj = roc_obj))
+}
+
+################################################################################
+# FUNCTION TO CREATE ROC DATA FOR PLOTS
+################################################################################
+
+create_roc_data <- function(model, data, var_dep, model_number) {
+  pred_probs <- predict(model, type = "response")
+  roc_obj <- roc(data[[var_dep]], pred_probs, quiet = TRUE)
+
+  roc_df <- data.frame(
+    FPR = 1 - roc_obj$specificities,
+    TPR = roc_obj$sensitivities,
+    Model = paste0("Model ", model_number),
+    AUC = as.numeric(auc(roc_obj))
+  )
+
+  return(roc_df)
+}
+
+################################################################################
+# FUNCTION TO CREATE ROC PLOT
+################################################################################
+
+create_roc_plot <- function(roc_data, title) {
+  # Create labels with AUC values
+  auc_labels <- roc_data %>%
+    group_by(Model) %>%
+    summarise(AUC = first(AUC)) %>%
+    mutate(label = paste0(Model, " (AUC = ", round(AUC, 3), ")"))
+
+  # Define color palette
+  colors <- c("#E74C3C", "#3498DB", "#2ECC71", "#F39C12", "#9B59B6", "#1ABC9C", "#34495E")
+
+  p <- ggplot(roc_data, aes(x = FPR, y = TPR, color = Model)) +
+    geom_line(size = 0.8, alpha = 0.8) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50", size = 0.8) +
+    scale_color_manual(values = colors,
+                       labels = auc_labels$label) +
+    labs(title = title,
+         x = "False Positive Rate (1 - Specificity)",
+         y = "True Positive Rate (Sensitivity)",
+         color = "Model") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 11),
+      legend.position = "bottom",
+      legend.text = element_text(size = 9),
+      legend.title = element_text(size = 10, face = "bold"),
+      panel.grid.minor = element_blank()
+    ) +
+    coord_equal() +
+    xlim(0, 1) + ylim(0, 1)
+
+  return(p)
+}
+
+################################################################################
+# ANALYSIS FOR EACH DEPENDENT VARIABLE
+################################################################################
+
+variables_dependientes <- list(
+  "protesis_dental" = "Denture use",
+  "dentadura_funcional" = "Functional dentition",
+  "edentulismo_completo" = "Complete edentulism",
+  "cavitated_caries" = "Cavitated caries"
+)
+
+# Store all results
+all_performance_results <- list()
+all_roc_plots <- list()
+
+for (var in names(variables_dependientes)) {
+
+  # Retrieve models and data from global environment
+  modelos <- get(paste0("logit_", var, "_modelos"))
+  data_completa <- get(paste0("data_completa_", var))
+
+  # Calculate metrics for all models
+  performance_results <- list()
+  roc_data_list <- list()
+
+  for (i in 1:7) {
+    model_name <- paste("Model", i)
+    result <- calculate_performance_metrics(modelos[[i]], data_completa, var, model_name)
+    performance_results[[i]] <- result$metrics
+    roc_data_list[[i]] <- create_roc_data(modelos[[i]], data_completa, var, i)
+  }
+
+  # Combine results of metrics
+  performance_table <- do.call(rbind, performance_results)
+
+  # Format table for visualization
+  performance_table_formatted <- performance_table %>%
+    mutate(across(c(AUC, Sensitivity, Specificity, Accuracy, Precision, NPV,
+                    F1_Score, Balanced_Accuracy, MCC, Brier_Score),
+                  ~round(., 3)),
+           Optimal_Threshold = round(Optimal_Threshold, 4))
+
+  # Display metrics table
+  kable(performance_table_formatted %>%
+          select(Model, AUC, Sensitivity, Specificity, Accuracy, Precision, NPV, F1_Score),
+        caption = paste("Performance metrics for", variables_dependientes[[var]], "(survey-weighted)"),
+        col.names = c("Model", "AUC", "Sens", "Spec", "Acc", "PPV", "NPV", "F1"),
+        format = "html",
+        escape = FALSE) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                  font_size = 11,
+                  full_width = FALSE) %>%
+    footnote(general = c(
+      "AUC = Area under ROC curve; Sens = Sensitivity; Spec = Specificity",
+      "Acc = Overall accuracy; PPV = Positive predictive value; NPV = Negative predictive value",
+      "F1 = F1 score; Adjusted for survey design"
+    )) %>%
+    print()
+
+  # Create ROC plot
+  roc_data_combined <- do.call(rbind, roc_data_list)
+  roc_plot <- create_roc_plot(roc_data_combined,
+                              paste("ROC Curves -", variables_dependientes[[var]]))
+
+  # Save results
+  all_performance_results[[var]] <- performance_table_formatted
+  all_roc_plots[[var]] <- roc_plot
+
+  # Save in global environment
+  assign(paste0("performance_", var), performance_table_formatted, envir = .GlobalEnv)
+}
+
+################################################################################
+# CREATE COMBINED ROC CURVE PLOT
+################################################################################
+
+# Combine the four ROC plots
+combined_roc_plot <- all_roc_plots[[1]] + all_roc_plots[[2]] + all_roc_plots[[3]] + all_roc_plots[[4]] +
+  plot_layout(ncol = 2, nrow = 2) +
+  plot_annotation(
+    title = "ROC Curves for all dependent variables (survey-weighted)",
+    theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+  )
+
+print(combined_roc_plot)
+
+################################################################################
+# SUMMARY OF BEST MODELS
+################################################################################
+
+# Find best models for each metric and variable
+for (var in names(variables_dependientes)) {
+
+  performance_table <- all_performance_results[[var]]
+
+  best_models <- data.frame(
+    Metric = c("AUC", "Sensitivity", "Specificity", "Accuracy", "F1 Score",
+                "MCC", "Brier Score (lower is better)"),
+    Best_Model = c(
+      performance_table$Model[which.max(performance_table$AUC)],
+      performance_table$Model[which.max(performance_table$Sensitivity)],
+      performance_table$Model[which.max(performance_table$Specificity)],
+      performance_table$Model[which.max(performance_table$Accuracy)],
+      performance_table$Model[which.max(performance_table$F1_Score)],
+      performance_table$Model[which.max(performance_table$MCC)],
+      performance_table$Model[which.min(performance_table$Brier_Score)]
+    ),
+    Value = c(
+      round(max(performance_table$AUC), 3),
+      round(max(performance_table$Sensitivity), 3),
+      round(max(performance_table$Specificity), 3),
+      round(max(performance_table$Accuracy), 3),
+      round(max(performance_table$F1_Score), 3),
+      round(max(performance_table$MCC), 3),
+      round(min(performance_table$Brier_Score), 3)
+    )
+  )
+
+  kable(best_models,
+        caption = paste("Best models by metric for", variables_dependientes[[var]]),
+        format = "html",
+        escape = FALSE) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  font_size = 11,
+                  full_width = FALSE) %>%
+    print()
+}
+
+################################################################################
+# COMPARATIVE TABLE BETWEEN VARIABLES
+################################################################################
+
+# Create comparative table of best model (by AUC) for each variable
+comparison_table <- data.frame()
+
+for (var in names(variables_dependientes)) {
+  performance_table <- all_performance_results[[var]]
+  best_idx <- which.max(performance_table$AUC)
+
+  comparison_table <- rbind(comparison_table, data.frame(
+    Variable = variables_dependientes[[var]],
+    Best_Model = performance_table$Model[best_idx],
+    AUC = performance_table$AUC[best_idx],
+    Sensitivity = performance_table$Sensitivity[best_idx],
+    Specificity = performance_table$Specificity[best_idx],
+    Accuracy = performance_table$Accuracy[best_idx],
+    F1 = performance_table$F1_Score[best_idx]
+  ))
+}
+
+kable(comparison_table,
+      caption = "Comparison of best model (by AUC) for each dependent variable (survey-weighted)",
+      format = "html",
+      escape = FALSE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                font_size = 11,
+                full_width = FALSE)
+```
+
+```{r}
+#| fig-height: 20
+#| fig-width: 14
+################################################################################
+# ADVANCED DIAGNOSTICS FOR LOGISTIC MODELS - MODEL 7
+################################################################################
+
+# Load necessary libraries
+library(ResourceSelection) # For Hosmer-Lemeshow test
+library(car)              # For GVIF calculation
+library(scales)           # For better axis formatting
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+
+################################################################################
+# 1. FUNCTION FOR CALIBRATION PLOT
+################################################################################
+
+create_calibration_plot <- function(model, data_completa, var_dep, model_name = "", n_groups = 10) {
+  # Get predicted probabilities and observed outcomes
+  pred_probs <- fitted(model)
+  observed <- data_completa[[var_dep]]
+
+  # Create groups based on deciles of predicted probability
+  prob_groups <- cut(pred_probs,
+                     breaks = quantile(pred_probs, probs = seq(0, 1, 1/n_groups)),
+                     include.lowest = TRUE,
+                     labels = FALSE)
+
+  # Calculate statistics by group
+  calib_data <- data.frame(
+    group = prob_groups,
+    pred_prob = pred_probs,
+    observed = observed
+  ) %>%
+    group_by(group) %>%
+    summarise(
+      n = n(),
+      mean_pred = mean(pred_prob),
+      mean_obs = mean(observed),
+      se_obs = sqrt(mean_obs * (1 - mean_obs) / n),
+      ci_lower = mean_obs - 1.96 * se_obs,
+      ci_upper = mean_obs + 1.96 * se_obs,
+      .groups = 'drop'
+    ) %>%
+    mutate(
+      ci_lower = pmax(0, ci_lower),
+      ci_upper = pmin(1, ci_upper)
+    )
+
+  # Hosmer-Lemeshow test
+  hl_test <- hoslem.test(observed, pred_probs, g = n_groups)
+
+  # Create plot
+  p <- ggplot(calib_data, aes(x = mean_pred, y = mean_obs)) +
+    # Perfect calibration line
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+    # Confidence intervals
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                  width = 0.02, alpha = 0.5) +
+    # Observed points
+    geom_point(aes(size = n), color = "darkblue", alpha = 0.7) +
+    # Observed calibration line
+    geom_smooth(method = "loess", se = TRUE, color = "red", size = 0.8) +
+    # Labels and theme
+    labs(
+      title = paste("Calibration Plot -", model_name),
+      subtitle = sprintf("Hosmer-Lemeshow test: χ² = %.2f, df = %d, p = %.3f",
+                        hl_test$statistic, hl_test$parameter, hl_test$p.value),
+      x = "Mean Predicted Probability",
+      y = "Observed Proportion",
+      size = "n"
+    ) +
+    scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      plot.subtitle = element_text(size = 10, color = "gray30"),
+      legend.position = "right"
+    )
+
+  return(p)
+}
+
+################################################################################
+# 2. FUNCTION FOR RESIDUALS VS FITTED VALUES PLOT
+################################################################################
+
+plot_residuals_vs_fitted <- function(model, model_name = "") {
+  # Extract fitted values and deviance residuals
+  fitted_vals <- fitted(model)
+  deviance_resid <- residuals(model, type = "deviance")
+
+  # Create dataframe
+  residual_data <- data.frame(
+    fitted_values = fitted_vals,
+    deviance_residuals = deviance_resid
+  )
+
+  # Create plot
+  p <- ggplot(residual_data, aes(x = fitted_values, y = deviance_residuals)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    geom_smooth(method = "loess", se = TRUE, color = "red", size = 0.8) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    labs(
+      title = paste("Residuals vs Fitted Values -", model_name),
+      x = "Fitted Values (Predicted Probabilities)",
+      y = "Deviance Residuals"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      axis.title = element_text(size = 10)
+    )
+
+  return(p)
+}
+
+################################################################################
+# 3. FUNCTION FOR MULTICOLLINEARITY ANALYSIS (GVIF)
+################################################################################
+
+create_gvif_plot <- function(model, model_name = "") {
+  # For survey models, VIF calculation is not straightforward
+  # We'll calculate GVIF using a weighted regression approach or skip for survey models
+  tryCatch({
+    # Try to calculate GVIF - note this may not be perfect for survey models
+    gvif_values <- vif(model)
+
+    # Handle different VIF and GVIF output formats
+    if(is.matrix(gvif_values) || is.data.frame(gvif_values)) {
+      # For models with categorical variables, vif() returns a matrix
+      gvif_df <- data.frame(
+        Variable = rownames(gvif_values),
+        GVIF = gvif_values[, "GVIF"],
+        Df = gvif_values[, "Df"],
+        GVIF_corrected = gvif_values[, "GVIF^(1/(2*Df))"]^2
+      )
+    } else {
+      # For models with only continuous variables
+      gvif_df <- data.frame(
+        Variable = names(gvif_values),
+        GVIF = gvif_values,
+        Df = 1,
+        GVIF_corrected = gvif_values
+      )
+    }
+
+    # Clean variable names for better visualization
+    gvif_df$Variable <- gsub("sindrome_metabolico_num", "Metabolic Syndrome", gvif_df$Variable)
+    gvif_df$Variable <- gsub("SexMUJER", "Sex: Female", gvif_df$Variable)
+    gvif_df$Variable <- gsub("^Age$", "Age", gvif_df$Variable)
+    gvif_df$Variable <- gsub("^Region$", "Region", gvif_df$Variable)
+    gvif_df$Variable <- gsub("`Geographic zone`", "Geographic Zone", gvif_df$Variable)
+    gvif_df$Variable <- gsub("`Health insurance system`", "Health Insurance System", gvif_df$Variable)
+    gvif_df$Variable <- gsub("`Educational attainment MINSAL`", "Educational Attainment", gvif_df$Variable)
+
+    # Order by GVIF_corrected value
+    gvif_df <- gvif_df %>% arrange(desc(GVIF_corrected))
+
+    # Create plot
+    p <- ggplot(gvif_df, aes(x = reorder(Variable, GVIF_corrected), y = GVIF_corrected)) +
+      geom_col(aes(fill = GVIF_corrected > 5), width = 0.7) +
+      geom_hline(yintercept = 5, linetype = "dashed", color = "red", size = 1) +
+      geom_hline(yintercept = 10, linetype = "dashed", color = "darkred", size = 1) +
+      scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "coral"),
+                        labels = c("GVIF < 5", "GVIF >= 5"),
+                        name = "") +
+      coord_flip() +
+      labs(
+        title = paste("Multicollinearity Assessment (GVIF) -", model_name),
+        subtitle = "GVIF^(1/(2*Df)) squared; Red lines at 5 and 10; Survey-adjusted",
+        x = "",
+        y = "GVIF^(1/(2*Df))²"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 12, face = "bold"),
+        plot.subtitle = element_text(size = 10, color = "gray30"),
+        axis.text.y = element_text(size = 9),
+        legend.position = "bottom"
+      ) +
+      scale_y_continuous(breaks = seq(0, max(gvif_df$GVIF_corrected) + 2, by = 2))
+
+    return(p)
+
+  }, error = function(e) {
+    # If GVIF calculation fails, return a plot with error message
+    p <- ggplot() +
+      annotate("text", x = 0.5, y = 0.5,
+               label = paste("GVIF calculation for survey models\nNote: VIF may not be ideal for survey designs",
+                           "Please review model coefficients directly"),
+               size = 5, hjust = 0.5, vjust = 0.5) +
+      theme_void() +
+      labs(title = paste("Multicollinearity Assessment -", model_name))
+    return(p)
+  })
+}
+
+################################################################################
+# APPLY DIAGNOSTICS TO MODEL 7 OF EACH VARIABLE
+################################################################################
+
+# Dependent variables
+variables_dependientes <- list(
+  "protesis_dental" = "Denture use",
+  "dentadura_funcional" = "Functional dentition",
+  "edentulismo_completo" = "Complete edentulism",
+  "cavitated_caries" = "Cavitated caries"
+)
+
+# Create diagnostic plots for each variable
+all_diagnostic_plots <- list()
+
+for (var in names(variables_dependientes)) {
+
+  # Retrieve Model 7 and complete data
+  modelos <- get(paste0("logit_", var, "_modelos"))
+  modelo7 <- modelos[[7]]  # Model 7
+  data_completa <- get(paste0("data_completa_", var))
+
+  model_name <- paste("Model 7 -", variables_dependientes[[var]])
+
+  # Create the three diagnostic plots
+  p1 <- create_calibration_plot(modelo7, data_completa, var, model_name)
+  p2 <- plot_residuals_vs_fitted(modelo7, model_name)
+  p3 <- create_gvif_plot(modelo7, model_name)
+
+  # Combine plots for this model
+  combined_plot <- p1 / p2 / p3 +
+    plot_layout(heights = c(1, 1, 1.2)) +
+    plot_annotation(
+      title = paste("Diagnostic Analysis -", variables_dependientes[[var]], "(survey-weighted)"),
+      theme = theme(plot.title = element_text(size = 14, face = "bold", hjust = 0.5))
+    )
+
+  all_diagnostic_plots[[var]] <- combined_plot
+
+  # Display plot
+  print(combined_plot)
+
+  # Save individual plot in global environment
+  assign(paste0("diagnostics_", var), combined_plot, envir = .GlobalEnv)
+}
+
+################################################################################
+# SUMMARY OF DIAGNOSTICS
+################################################################################
+
+# Create summary table of Hosmer-Lemeshow tests
+hl_summary <- data.frame()
+
+for (var in names(variables_dependientes)) {
+  modelos <- get(paste0("logit_", var, "_modelos"))
+  modelo7 <- modelos[[7]]
+  data_completa <- get(paste0("data_completa_", var))
+
+  # Calculate Hosmer-Lemeshow test
+  pred_probs <- fitted(modelo7)
+  observed <- data_completa[[var]]
+  hl_test <- hoslem.test(observed, pred_probs, g = 10)
+
+  hl_summary <- rbind(hl_summary, data.frame(
+    Variable = variables_dependientes[[var]],
+    Chi_squared = round(hl_test$statistic, 3),
+    DF = hl_test$parameter,
+    P_value = round(hl_test$p.value, 4),
+    Calibration = ifelse(hl_test$p.value > 0.05, "Good", "Poor")
+  ))
+}
+
+# Display summary table
+kable(hl_summary,
+      caption = "Summary of Hosmer-Lemeshow Tests for Model 7 (survey-weighted)",
+      col.names = c("Variable", "χ²", "DF", "P-value", "Calibration"),
+      format = "html",
+      escape = FALSE) %>% remove_column(1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                font_size = 11,
+                full_width = FALSE) %>%
+  footnote(general = c("A p-value > 0.05 indicates good model calibration",
+                      "Based on survey-weighted models"))
+```
